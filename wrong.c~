@@ -1,0 +1,180 @@
+//Dan Miller --- Project #5 --- submitted alone
+
+#include <stdio.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <sys/mman.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <string.h>
+
+#include "bootsect.h"
+#include "bpb.h"
+#include "direntry.h"
+#include "fat.h"
+#include "dos.h"
+
+
+int cc[4096] = {0};
+static int id = 0;
+
+void usage(char *progname) {
+    fprintf(stderr, "usage: %s <imagename>\n", progname);
+    exit(1);
+}
+
+void fix_orphan(int start_cluster, struct direntry *dirent, uint8_t *image_buf, struct bpb33* bpb) {
+	//Traverse the FAT table. Count size. Label all of them in cc. Create directory entry
+	id++;
+	cc[start_cluster] = id;
+}
+
+
+void find_orphan(struct direntry *dirent, uint8_t *image_buf, struct bpb33* bpb) {
+	int count = 0;
+	for (int i = 2; i < 4096; i++) {
+		if (cc[i] <= 0) {
+			if (get_fat_entry(i, image_buf, bpb) != 0) {
+				printf("%i\n", get_fat_entry(i, image_buf, bpb);
+				fix_orphan(i, dirent, image_buf, bpb);
+				count++;
+			}		
+		}
+	}
+	printf("%i\n", count);
+}
+
+
+int traverse_fat(struct direntry *dirent, uint8_t *image_buf, struct bpb33* bpb) {
+	id++;
+	uint16_t start_cluster = getushort(dirent->deStartCluster);
+	uint32_t size = getulong(dirent->deFileSize);
+	size = ((size+511)/512);
+	uint16_t fat_entry = get_fat_entry(start_cluster, image_buf, bpb);
+	uint16_t prev_fat = fat_entry;
+	int count = 1;
+
+	//check case where file size is just 1
+
+	while (!(is_end_of_file(fat_entry))) {
+		if (fat_entry == (FAT12_MASK & CLUST_BAD)) {
+			printf("Defect in cluster %i\n", count);
+			cc[fat_entry] = -1;
+		}
+		if (count >= size) {
+			uint16_t tmp = get_fat_entry(fat_entry, image_buf, bpb);
+
+			//unlink the previous entry with this entry
+			if (count==size) {
+				printf("Found something too big!\n");
+				fflush(stdout);
+				set_fat_entry(prev_fat, FAT12_MASK&CLUST_EOFS, image_buf, bpb);
+				assert(get_fat_entry(prev_fat, image_buf, bpb) == (FAT12_MASK&CLUST_EOFS));
+			}
+				
+			//set the current cluster to free
+			set_fat_entry(fat_entry, FAT12_MASK&CLUST_FREE, image_buf, bpb);
+			assert(get_fat_entry(fat_entry, image_buf, bpb) == 0);
+			printf("Fixed!\n");
+
+			fat_entry = tmp;
+			count++;
+		}
+
+		else {
+			//go to next entry
+			cc[fat_entry] = id;
+			prev_fat = fat_entry;
+			fat_entry = get_fat_entry(fat_entry, image_buf, bpb);
+			count++;
+		}
+	}
+
+	if (size > count) {
+		printf("Metadata is bigger than cluster data --- adjusting metadata\n");
+		putulong(dirent->deFileSize, count*512);
+		printf("Should be fixed now\n");
+	}
+
+	return count;
+}
+
+
+uint16_t build_cc(struct direntry *dirent, struct bpb33 *bpb, uint8_t *image_buf) {
+	uint16_t followclust = 0;
+
+	int i;
+	char name[9];
+	char extension[4];
+	uint32_t size;
+	uint16_t file_cluster;
+	name[8] = ' ';
+	extension[3] = ' ';
+	memcpy(name, &(dirent->deName[0]), 8);
+	memcpy(extension, dirent->deExtension, 3);
+
+	if (name[0] == SLOT_EMPTY || ((uint8_t)name[0]) == SLOT_DELETED || ((uint8_t)name[0]) == 0x2E) {
+		return followclust;
+	}
+
+	//names are space-padded, remove the spaces
+	for (i = 8; i > 0; i--) {
+		if (name[i] == ' ') {
+			name[i] = '\0';
+		}
+		else {
+			break;
+		}
+
+		if ((dirent->deAttributes & ATTR_WIN95LFN) == ATTR_WIN95LFN) {
+		}
+
+		else if ((dirent->deAttributes & ATTR_DIRECTORY) != 0) {
+			if((dirent->deAttributes & ATTR_HIDDEN) != ATTR_HIDDEN) {
+				file_cluster = getushort(dirent->deStartCluster);
+				followclust = file_cluster;
+			}
+		}
+
+		else {
+			//a "regular" file entry
+			//print attributes, size, starting cluster, etc.
+
+			int ro = (dirent->deAttributes & ATTR_READONLY) == ATTR_READONLY;
+			int hidden = (dirent->deAttributes & ATTR_HIDDEN) == ATTR_HIDDEN;
+			int sys = (dirent->deAttributes & ATTR_SYSTEM) == ATTR_SYSTEM;
+			int arch = (dirent->deAttributes & ATTR_ARCHIVE) == ATTR_ARCHIVE;
+
+			size = getulong(dirent->deFileSize);
+			int count = traverse_fat(dirent, image_buf, bpb);
+
+			printf("\t%s.%s (%u bytes %d clusters) (starting cluster %d)
+		}
+			
+	}
+}
+
+
+int main(int argc, char** argv) {
+    uint8_t *image_buf;
+    int fd;
+    struct bpb33* bpb;
+    if (argc < 2) {
+	usage(argv[0]);
+    }
+
+    image_buf = mmap_file(argv[1], &fd);
+    bpb = check_bootsector(image_buf);
+
+    // your code should start here...
+
+
+
+
+
+
+    unmmap_file(image_buf, &fd);
+    return 0;
+}
